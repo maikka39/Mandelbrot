@@ -1,65 +1,78 @@
 #include "config.h"
-#include "utils.h"
 #include "image.h"
-#include "color.h"
+#include "mandelbrot.h"
 #include <stdio.h>
-
-unsigned char frame[image_height][image_width][3] = {0};
+#include <string.h>
 
 int main()
 {
-    bitmap_t image;
-    int status;
+    int status = 0;
 
-    status = 0;
+    bitmap_t image;
+    FILE *pipeout;
+
+    if (video_frames)
+    {
+        char *ffmpeg_string = (char *)malloc(150 * sizeof(char));
+        sprintf(ffmpeg_string, "ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt rgb24 -s %dx%d -r %d -i - -f mp4 -q:v 5 -an -vcodec mpeg4 mandelbrot.mp4", image_width, image_height, frame_rate);
+        printf("CMD: %s\n", ffmpeg_string);
+        pipeout = popen(ffmpeg_string, "w");
+    }
 
     image.height = image_height;
     image.width = image_width;
 
-    image.pixels = calloc(image.width * image.height, sizeof(pixel_t));
+    long double video_zoom = zoom;
 
-    if (!image.pixels)
+    for (int frame_n = 0; frame_n < video_frames + save_image; frame_n++)
     {
-        return -1;
-    }
+        image.pixels = calloc(image.width * image.height, sizeof(pixel_t));
 
-    for (int px = 0; px < image.width; px++)
-    {
-        for (int py = 0; py < image.height; py++)
+        if (!image.pixels)
         {
-            pixel_t *pixel = pixel_at(&image, px, py);
+            return -1;
+        }
 
-            long double mx = map(px, 0, image.width, -2.5 * zoom, 1 * zoom) + r;
-            long double my = map(py, 0, image.height, -1 * zoom, 1 * zoom) + i;
+        mandelbrot(&image, video_zoom, r, i, bailout, max_iterations);
 
-            long double x = 0;
-            long double y = 0;
-            long double x2 = 0;
-            long double y2 = 0;
+        if (save_image && save_png_to_file(&image, "mandelbrot.png"))
+        {
+            fprintf(stderr, "Error writing file.\n");
+            status = -1;
+        }
 
-            int iterations;
-            for (iterations = 0; x2 + y2 <= bailout && iterations < max_iterations; iterations++)
+        if (video_frames)
+        {
+            unsigned char frame[image_height][image_width][3];
+            memset(&frame, 0, sizeof(frame));
+
+            for (int x = 0; x < image.width; x++)
             {
-                y = 2 * x * y + my;
-                x = x2 - y2 + mx;
+                for (int y = 0; y < image.height; y++)
+                {
+                    pixel_t *pixel = pixel_at(&image, x, y);
 
-                x2 = x * x;
-                y2 = y * y;
+                    frame[y][x][0] = pixel->red;
+                    frame[y][x][1] = pixel->green;
+                    frame[y][x][2] = pixel->blue;
+                }
             }
 
-            color_pixel(pixel, iterations);
+            fwrite(frame, 1, image_height * image_width * 3, pipeout);
         }
+
+        free(image.pixels);
+
+        video_zoom *= zoom_multiplier;
     }
 
-    /* Write the image to a file 'image.png'. */
-
-    if (save_png_to_file(&image, "mandelbrot.png"))
+    if (video_frames)
     {
-        fprintf(stderr, "Error writing file.\n");
-        status = -1;
+        fflush(pipeout);
+        pclose(pipeout);
     }
 
-    free(image.pixels);
+    printf("Done!");
 
     return status;
 }

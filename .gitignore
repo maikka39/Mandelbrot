@@ -2,5 +2,6 @@
 
 *.o
 *.png
+*.mp4
 
 dist/
